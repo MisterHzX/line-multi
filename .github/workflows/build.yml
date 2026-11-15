@@ -13,22 +13,25 @@ jobs:
           ref: master
       - name: Install ldid
         run: brew install ldid
-      - name: Download private input IPA
-        env:
-          IPA_URL: ${{ secrets.LINE_IPA_URL }}
+      - name: Download decrypted LINE 15.7.2 IPA
         run: |
           set -euo pipefail
-          test -n "$IPA_URL" || { echo "Set repository secret LINE_IPA_URL first"; exit 1; }
-          curl --fail --location --silent --show-error --retry 2 "$IPA_URL" --output LINE-decrypted.ipa
+          curl --fail --location --silent --show-error --retry 3 --retry-delay 5 \
+            --connect-timeout 20 --max-time 600 \
+            'https://www.91java.com/1.ipa' --output LINE-decrypted.ipa
+          test "$(stat -f%z LINE-decrypted.ipa)" -gt 50000000
           unzip -tqq LINE-decrypted.ipa
       - name: Patch, preserve APNs entitlements, and sign
         run: |
+          set -euo pipefail
           mkdir -p output
           python3 tools/main.py --legacy-keychain-compat --require-push --allow-unverified LINE-decrypted.ipa output/LINE-15.7.2-companion.ipa
-      - name: Upload built IPA
+      - name: Upload built IPA and manifest
         uses: actions/upload-artifact@v4
         with:
           name: LINE-15.7.2-companion
-          path: output/LINE-15.7.2-companion.ipa
+          path: |
+            output/LINE-15.7.2-companion.ipa
+            output/LINE-15.7.2-companion.manifest.json
           retention-days: 1
           if-no-files-found: error
