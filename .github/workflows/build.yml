@@ -41,6 +41,27 @@ jobs:
           )
           p.write_text(s.replace(needle, diagnostic + needle))
           PY
+      - name: Recognize ldid LINKEDIT VM size update
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('tools/main.py')
+          s = p.read_text()
+          old = "        linkedit_file_size = linkedit_file_size_range(modified)\n"
+          new = old + (
+              "        linkedit_vm_size = range(linkedit_file_size.start - 16, linkedit_file_size.start - 8)\n"
+              "        linkedit_file_size_value = int.from_bytes(modified[linkedit_file_size.start:linkedit_file_size.stop], 'little')\n"
+              "        linkedit_vm_size_value = int.from_bytes(modified[linkedit_vm_size.start:linkedit_vm_size.stop], 'little')\n"
+              "        if linkedit_vm_size_value != (linkedit_file_size_value + 0x3fff) & ~0x3fff:\n"
+              "            raise AssertionError('Unexpected __LINKEDIT VM size after ldid signing')\n"
+          )
+          assert s.count(old) == 1
+          s = s.replace(old, new)
+          old = "i in signature_command or i in linkedit_file_size"
+          assert s.count(old) == 1
+          s = s.replace(old, "i in signature_command or i in linkedit_file_size or i in linkedit_vm_size")
+          p.write_text(s)
+          PY
       - name: Patch and verify
         run: |
           set -euo pipefail
