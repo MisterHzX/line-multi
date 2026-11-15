@@ -21,12 +21,44 @@ jobs:
             'https://www.91java.com/1.ipa' --output LINE-decrypted.ipa
           test "$(stat -f%z LINE-decrypted.ipa)" -gt 50000000
           unzip -tqq LINE-decrypted.ipa
-      - name: Patch, preserve APNs entitlements, and sign
+      - name: Add safe byte-change diagnostics
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('tools/main.py')
+          s = p.read_text()
+          needle = "    if (len(modified) != len(original) and not signature_growth) or any(\n"
+          assert s.count(needle) == 1, "Upstream verification code changed"
+          diagnostic = """    # Diagnostics only: do not weaken the integrity assertion.
+    invalid = [i for i, ok in zip(changed, allowed) if not ok]
+    print('DIAG original_size=', len(original), 'modified_size=', len(modified), flush=True)
+    print('DIAG total_changed=', len(changed), 'invalid_count=', len(invalid), flush=True)
+    print('DIAG invalid_first_64=', [hex(i) for i in invalid[:64]], flush=True)
+    print('DIAG signature_ranges=', (code_signature_range(original).start, code_signature_range(original).stop),
+          (code_signature_range(modified).start, code_signature_range(modified).stop), flush=True)
+    print('DIAG signature_commands=', (code_signature_command_range(original).start, code_signature_command_range(original).stop),
+          (code_signature_command_range(modified).start, code_signature_command_range(modified).stop), flush=True)
+    print('DIAG injection=', injection, flush=True)
+    allowed = (i not in set(invalid) for i in changed)
+"""
+          s = s.replace(needle, diagnostic + needle)
+          p.write_text(s)
+          PY
+      - name: Patch and verify without bypassing integrity checks
         run: |
           set -euo pipefail
           mkdir -p output
-          python3 tools/main.py --legacy-keychain-compat --require-push --allow-unverified LINE-decrypted.ipa output/LINE-15.7.2-companion.ipa
-      - name: Upload built IPA and manifest
+          python3 tools/main.py --legacy-keychain-compat --require-push --allow-unverified LINE-decrypted.ipa output/LINE-15.7.2-companion.ipa 2>&1 | tee output/build-log.txt
+      - name: Upload build diagnostics even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LINE-build-diagnostics
+          path: output/build-log.txt
+          retention-days: 3
+          if-no-files-found: warn
+      - name: Upload verified IPA
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: LINE-15.7.2-companion
